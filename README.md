@@ -15,6 +15,10 @@ Move Coach turns the book's movement self-tests into a guided, camera-scored ass
 
 Built at [Sundai Hack #143: Biomarkers of Aging](https://www.sundai.club/projects/10fe4d59-2cd8-4570-ba25-cd72448f2c97), Boston, October 2026.
 
+![Move Coach in the Claude desktop app: Claude coaching in the chat on the left; on the right, the Move Score board above a live Shoulder Rotation Test with pose landmarks](docs/screenshots/1-move-score-shoulder-rotation.png)
+
+*Claude coaches in the chat. The Move Coach pane shows the running Move Score, the live camera with pose landmarks, and the questions Claude will ask to confirm the score.*
+
 ## What it does
 
 Seven tests, covering five of the book's Vital Signs, add up to a 60-point **Move Score**:
@@ -37,6 +41,25 @@ Each test runs the same way:
 4. **The result is logged** to a CSV under the name of the person taking the test, so the next session can compare against this one.
 
 The confirmation step matters. During testing, the camera counted a near-miss as a foot touch, and it counted a Sit-and-Rise hand touch that never happened. The camera does the measuring, and you have the final say on anything it can't see.
+
+![SOLEC: standing on one leg with eyes closed; the pane shows 0 foot touches on each side and explains how that became 10/10](docs/screenshots/2-solec-balance.png)
+
+*SOLEC (one leg, eyes closed): the camera counts foot touches, and the yellow box explains how they became points. Claude then asks which leg you stood on first.*
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/5-squat-pose.png" alt="Camera frame of a deep squat with pose landmarks: hips well below the knees, heels flat"></td>
+<td width="50%"><img src="docs/screenshots/6-balance-with-muse-eeg.png" alt="Camera frame of Old Man Balance on one leg, wearing a Muse EEG headband"></td>
+</tr>
+<tr>
+<td><em>Squat, Position 1: the landmarks put the hip crease well below the knees, with heels flat.</em></td>
+<td><em>Old Man Balance on one leg, wearing the Muse headband for EEG.</em></td>
+</tr>
+</table>
+
+![Couch Test retest scored Floor P3 on both sides from measured torso lean and hip extension](docs/screenshots/3-couch-test.png)
+
+*Couch Test: Floor P3 on both sides, from the measured torso lean (16°, 17°) and hip extension (170°, 171°). Claude points out what looks off and asks before logging it.*
 
 ### Brain waves while you move (optional)
 
@@ -143,6 +166,10 @@ Move Coach is a Claude Code plugin, built in a day. Claude is the coach's brain,
 - **Pose engine** (`helper/pose_coach.py`): OpenCV reads the camera, and MediaPipe Pose Landmarker gives 33 body landmarks per frame. Each test is a small state machine (set up, hold, switch sides, result). It turns landmarks into measurements: joint angles, hip depth in torso-lengths, and foot-to-floor contact.
 - **Voice:** ElevenLabs, or the Mac's built-in voice if there's no key. Breathing holds use slower, calmer pacing.
 - **The pane** (`hooks/register.tsx`): a live view inside Claude Code with the pose skeleton, the Move Score board, the scoring explanation and the EEG traces. It works in both the desktop app and the terminal.
+
+  ![The same pane in the terminal: Airport Scanner test with the camera frame, measured lift and the result JSON](docs/screenshots/4-terminal-airport-scanner.png)
+
+  *The same pane in a terminal, during the Airport Scanner test: the camera frame, the measured lift height and the result Claude receives.*
 - **Tool and skill:**
   - The plugin gives Claude a `camera_test` tool to start, stop, check and correct tests.
   - The bundled `built-to-move-mobility-test` skill holds the protocols, the scoring tables and the logging rules, and runs the guided assessment.
@@ -151,7 +178,7 @@ Move Coach is a Claude Code plugin, built in a day. Claude is the coach's brain,
 
 ## Illustrations
 
-The pane can show an illustration of each test next to the camera. The book's illustrations are copyrighted, so they aren't included, and the pane works without them. To add your own photos or drawings, see [`plugins/move-coach/assets/book/README.md`](plugins/move-coach/assets/book/README.md).
+The pane can show an illustration of each test next to the camera. The book's illustrations are copyrighted, so they aren't included, and the pane works without them. They're blanked out in the screenshots above for the same reason. To add your own photos or drawings, see [`plugins/move-coach/assets/book/README.md`](plugins/move-coach/assets/book/README.md).
 
 ## What's next
 
