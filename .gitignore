@@ -1,0 +1,4 @@
+.DS_Store
+__pycache__/
+plugins/move-coach/assets/book/*
+!plugins/move-coach/assets/book/README.md

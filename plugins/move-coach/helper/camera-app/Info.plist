@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>local.move-coach.camera</string>
+  <key>CFBundleName</key><string>Move Coach Camera</string>
+  <key>CFBundleExecutable</key><string>move-coach-camera</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSBluetoothAlwaysUsageDescription</key><string>Move Coach reads your Muse EEG headband over Bluetooth (optional) to show your brain waves during the tests.</string>
+  <key>NSCameraUsageDescription</key><string>Move Coach watches your pose through the camera to score Built to Move tests.</string>
+</dict>
+</plist>
