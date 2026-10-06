@@ -1,6 +1,6 @@
 {
   "name": "move-coach",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Camera pane with pose landmarks, spoken coaching and optional Muse EEG for the Built to Move mobility tests (macOS)",
   "types": "./types/index.d.ts",
   "author": {

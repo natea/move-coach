@@ -146,7 +146,11 @@ Move Coach reads the headband through [muse-lsl](https://github.com/alexandrebar
 | *"run the Built to Move guided assessment"* | All seven tests in a row; you only answer the confirm questions |
 | *"run the squat test"* | One test |
 | *"show my mobility history"* | Latest scores next to the previous and first ones |
-| `/move-coach [test] [camera]` | Opens the pane and runs a test, or a camera preview with no test |
+| `/move-coach quick Jane` | 5-minute assessment for Jane (Sit-and-Rise, Squat, SOLEC) |
+| `/move-coach full Jane` | All seven tests for Jane |
+| `/move-coach person Jane` | Switches the profile to Jane; with no name, lists everyone |
+| `/move-coach reset` | Clears the current person's Move Score |
+| `/move-coach [test] [camera]` | Opens the pane and runs a test, or a camera preview with no test. The pane also has a camera picker, and remembers your choice |
 | `/move-coach stop` | Stops the current test |
 | `/move-coach eeg` / `/move-coach eeg stop` | Connects or disconnects the Muse |
 

@@ -151,6 +151,11 @@ const BONES: [number, number][] = [
 
 type Run = { dir: string; stream: AsyncGenerator<unknown, unknown> & { return: (v?: unknown) => unknown } }
 let current: Run | undefined
+/** the camera the pane's picker (or the last start) chose; tests without a camera use it */
+let chosenCamera: number | undefined
+const cameras = atom({ plugin: 'move-coach', key: 'cameras' } as const, [] as { index: number; name: string }[])
+/** a camera test, as opposed to the idle preview the pane shows when it opens */
+const isTesting = (v: CoachView) => v.isRunning && v.test !== 'free'
 /** ElevenLabs settings from the plugin's options; blank key = macOS `say` */
 let voiceOpts = { key: '', voiceId: '' }
 let homeDir: string | undefined
@@ -228,10 +233,19 @@ async function changePerson($: EngineInterface, name: string | undefined): Promi
     const list = Object.values(people).map(p => p.name).join(', ') || 'none'
     return `Testing ${await read($, person)}. People with results: ${list}. Give a name to switch.`
   }
-  if ((await read($, view)).isRunning || baselineRun) return 'Not switched: a test or baseline is running. Stop it first.'
+  if (isTesting(await read($, view)) || baselineRun) return 'Not switched: a test or baseline is running. Stop it first.'
   const r = await switchPerson($, name)
   return r.isNew ? `New profile: ${r.name}. Their Move Score starts empty, and they need their own EEG baseline.` : `Switched to ${r.name}. ${scoreLine(r.name, r.scores)}.${lastBaseline ? '' : ' No EEG baseline yet.'}`
 }
+
+const USAGE = [
+  '/move-coach quick Jane      5-minute assessment (3 tests) for Jane',
+  '/move-coach full Jane       all 7 tests for Jane',
+  '/move-coach person Jane     switch the profile to Jane (also: name, profile); no name lists everyone',
+  '/move-coach reset           clear the current person\'s Move Score',
+  '/move-coach squat [camera]  one test: sit_and_rise, couch, airport_scanner, shoulder_rotation, squat, solec, old_man',
+  '/move-coach                 camera preview;  stop · cameras · eeg [stop] · baseline [seconds]',
+].join('\n')
 
 /** "Alex: 28/60 (3 of 6 tests)" or "Alex: no tests yet". */
 function scoreLine(name: string, s: Scores): string {
@@ -310,16 +324,18 @@ async function findUv($: EngineInterface): Promise<string> {
 
 const CAMERA_ALIASES: Record<string, string> = { logitech: 'c920|logitech|webcam', iphone: 'iphone', mac: 'macbook pro camera', macbook: 'macbook pro camera' }
 
-/** Video devices as macOS lists them, in the index order OpenCV uses. */
+/** Video devices as macOS lists them, in the index order OpenCV uses; also refreshes the pane's picker, since plugging a camera in renumbers them. */
 async function listCameras($: EngineInterface): Promise<{ index: number; name: string }[]> {
   const listed = await $.process.run(['/bin/zsh', '-lc', 'ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1'], { timeoutMs: 15_000 })
   const video = listed.stdout.split('AVFoundation audio devices')[0] ?? ''
-  return [...video.matchAll(/\[(\d+)\] (.+)/g)].map(m => ({ index: Number(m[1]), name: m[2]!.trim() })).filter(c => !/Capture screen/.test(c.name))
+  const cams = [...video.matchAll(/\[(\d+)\] (.+)/g)].map(m => ({ index: Number(m[1]), name: m[2]!.trim() })).filter(c => !/Capture screen/.test(c.name))
+  if (cams.length) await update($, cameras, () => cams)
+  return cams
 }
 
 /** A camera number, or a name ("logitech", "iphone", "c920") matched against the device list. */
 async function resolveCamera($: EngineInterface, camera: string | number | undefined): Promise<number> {
-  if (camera === undefined || camera === '') return 0
+  if (camera === undefined || camera === '') return chosenCamera ?? (((await $.store.get('camera')) as number | undefined) ?? 0)
   if (/^\d+$/.test(String(camera))) return Number(camera)
   const want = String(camera).toLowerCase()
   const pattern = new RegExp(CAMERA_ALIASES[want] ?? want.replace(/[^a-z0-9 ]/g, ''), 'i')
@@ -445,7 +461,7 @@ async function startBaseline($: EngineInterface, seconds = 30): Promise<string> 
   const notReady = await eegNotReady($)
   if (notReady) return `Baseline not started. ${notReady}`
   if (baselineRun) return 'A baseline is already running.'
-  if ((await read($, view)).isRunning) return 'Baseline not started: a camera test is running. Stop it first, or wait until it ends.'
+  if (isTesting(await read($, view))) return 'Baseline not started: a camera test is running. Stop it first, or wait until it ends.'
   const s = Math.max(10, Math.min(120, Math.round(seconds)))
   const audio = await audioOutput($)
   const run: BaselineRun = { phase: 'settle', open: emptyAcc(), closed: emptyAcc(), timers: [], seconds: s, audio }
@@ -453,7 +469,7 @@ async function startBaseline($: EngineInterface, seconds = 30): Promise<string> 
   const at = (ms: number, fn: () => Promise<void>) => run.timers.push($.clock.after(ms, () => void (baselineRun === run && fn())))
   const t0 = Date.now()
   await setBaseline($, { phase: 'settle', endsAt: t0 + 5000, summary: '' })
-  await $.ui.open({ id: PANE, title: 'Move Coach' })
+  await openPane($)
   speak($, `Baseline. Sit still and relax your jaw. Eyes open, soft gaze, for ${s} seconds.`)
   at(5000, async () => {
     run.phase = 'open'
@@ -501,7 +517,7 @@ async function startBaseline($: EngineInterface, seconds = 30): Promise<string> 
 /** Optional: stream a Muse headband through muse-lsl into the pane. */
 async function startEeg($: EngineInterface, muse?: string): Promise<void> {
   if (eegRun && (await read($, eeg)).isRunning && !muse) {
-    await $.ui.open({ id: PANE, title: 'Move Coach' })
+    await openPane($)
     return
   }
   await stopEeg($)
@@ -511,7 +527,7 @@ async function startEeg($: EngineInterface, muse?: string): Promise<void> {
   // same app wrapper as the camera, so macOS asks about (and remembers) Bluetooth for it
   const argv = [`${$.plugin.root}/helper/launch.sh`, dir, uv, 'run', '--script', `${$.plugin.root}/helper/eeg_stream.py`, '--out-dir', dir, ...(muse ? ['--name', muse] : [])]
   await update($, eeg, () => ({ ...EEG_EMPTY, isRunning: true, status: 'starting EEG…' }))
-  await $.ui.open({ id: PANE, title: 'Move Coach' })
+  await openPane($)
   const stream = $.process.spawn({ argv }) as unknown as Run['stream']
   const run: Run = { dir, stream }
   eegRun = run
@@ -541,7 +557,7 @@ async function startEeg($: EngineInterface, muse?: string): Promise<void> {
             lastEegAt = Date.now()
             if (baselineRun?.phase === 'open') addSample(baselineRun.open, bands, (msg.quality as string[]) ?? [])
             if (baselineRun?.phase === 'closed') addSample(baselineRun.closed, bands, (msg.quality as string[]) ?? [])
-            if ((await read($, view)).isRunning) {
+            if (isTesting(await read($, view))) {
               for (const b of BAND_ORDER) eegAcc.sums[b] = (eegAcc.sums[b] ?? 0) + (bands[b] ?? 0)
               eegAcc.n++
             }
@@ -586,10 +602,31 @@ async function stop($: EngineInterface): Promise<void> {
 
 type Sequence = { step?: number; total?: number; next?: string }
 
+/** Opens the pane with the live camera: an idle preview starts unless a test is already running. */
+async function openPane($: EngineInterface): Promise<void> {
+  if (!current) await start($, 'free', { isStartedByTool: false })
+  else await $.ui.open({ id: PANE, title: 'Move Coach' })
+  // ffmpeg takes a moment to list devices: refresh the picker in the background
+  void listCameras($).catch(() => {})
+}
+
+/** The pane's camera picker: restarts the preview on the new camera; a running test keeps its camera. */
+async function pickCamera($: EngineInterface, index: number): Promise<void> {
+  chosenCamera = index
+  await $.store.set('camera', index)
+  const v = await read($, view)
+  if (!isTesting(v)) await start($, 'free', { camera: index, isStartedByTool: false })
+}
+
 async function start($: EngineInterface, test: TestKey, opts: { variant?: string; camera?: string | number; isStartedByTool: boolean } & Sequence): Promise<string> {
   await stop($)
-  await cancelBaseline($, 'a camera test started')
+  // the preview is only a picture: it doesn't disturb a baseline (which opens the pane, and so starts one)
+  if (test !== 'free') await cancelBaseline($, 'a camera test started')
   const cameraIndex = await resolveCamera($, opts.camera)
+  // a name already listed afresh; a number or the remembered choice didn't, so refresh the picker's labels
+  if (typeof opts.camera !== 'string' || /^\d+$/.test(opts.camera)) void listCameras($).catch(() => {})
+  chosenCamera = cameraIndex
+  await $.store.set('camera', cameraIndex)
   // inside tmux the terminal can't draw images, so the helper also sends half-block cells
   const inTmux = (await $.process.run(['/usr/bin/printenv', 'TMUX'])).exitCode === 0
   const uv = await findUv($)
@@ -610,6 +647,8 @@ async function start($: EngineInterface, test: TestKey, opts: { variant?: string
     '--variant', opts.variant ?? 'floor',
     '--camera', String(cameraIndex),
     ...(opts.next ? ['--next', opts.next] : []),
+    // the preview is silent and stays on longer; a test replaces it
+    ...(test === 'free' ? ['--mute', '--max-seconds', '1800'] : []),
     ...(voiceOpts.key ? ['--voice-file', voiceFile] : []),
     ...(inTmux ? ['--cells', '80x23'] : []),
   ]
@@ -695,7 +734,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'move-coach',
       description: 'Open the Move Coach camera pane (pose landmarks + spoken coaching)',
-      argumentHint: "[free|squat|sit_and_rise|couch|airport_scanner|shoulder_rotation|solec|old_man|stop|cameras|eeg|baseline|person|reset] [camera # or name | Muse name | stop | seconds per phase | a person's name]",
+      argumentHint: "[quick <name> | full <name> | person <name> | reset | <test> [camera] | stop | cameras | eeg | baseline]",
     })
     await $.tool.register({
       name: TOOL,
@@ -737,7 +776,23 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'move-coach' }, async ($, e) => {
     const [arg, cam, ...rest] = String((e as { args?: string }).args ?? '').trim().split(/\s+/)
-    if (arg === 'person') return { text: `Move Coach: ${await changePerson($, [cam, ...rest].filter(Boolean).join(' '))}` }
+    const name = [cam, ...rest].filter(Boolean).join(' ')
+    if (arg === 'person' || arg === 'name' || arg === 'profile') return { text: `Move Coach: ${await changePerson($, name)}` }
+    if (arg === 'quick' || arg === 'full' || arg === 'all') {
+      // the guided sequence is Claude's job (the built-to-move-mobility-test skill); set the person, then hand it over
+      let who = await read($, person)
+      if (name) {
+        const switched = await changePerson($, name)
+        if (switched.startsWith('Not switched')) return { text: `Move Coach: ${switched}` }
+        who = await read($, person)
+      }
+      const mode = arg === 'quick' ? 'quick' : 'all'
+      await openPane($)
+      const prompt = `Run the Move Coach ${mode === 'quick' ? 'quick assessment (Sit-and-Rise, Squat, SOLEC)' : 'full guided assessment'} for ${who} with the built-to-move-mobility-test skill (argument: ${mode} ${who}). The profile is already set to ${who}.`
+      // a prompt can't be submitted while this command is still running: hand it over just after
+      $.clock.after(300, () => void $.prompt.submit({ text: prompt }).catch(() => $.ui.toast(`Move Coach: type "/built-to-move-mobility-test ${mode} ${who}" to start.`)))
+      return { text: `Move Coach: ${mode === 'quick' ? 'quick assessment' : 'full assessment'} for ${who}. Claude takes it from here.` }
+    }
     if (arg === 'reset') {
       const who = await read($, person)
       await update($, scores, () => ({}))
@@ -765,7 +820,8 @@ export const register: Register = (on, options) => {
       await startEeg($, cam)
       return { text: 'Move Coach: EEG starting. Turn your Muse on; your brain waves appear under the camera.' }
     }
-    const test = (arg && arg in TESTS ? arg : 'free') as TestKey
+    if (arg && !(arg in TESTS)) return { text: `Move Coach: I don't know "${arg}".\n${USAGE}` }
+    const test = (arg || 'free') as TestKey
     await start($, test, { camera: cam, isStartedByTool: false })
     return { text: `Move Coach: ${TESTS[test].title} started.` }
   })
@@ -780,7 +836,7 @@ export const register: Register = (on, options) => {
     if (input.action === 'baseline') return text(await startBaseline($, input.seconds ?? 30))
     if (input.action === 'person') return text(await changePerson($, input.name))
     if (input.action === 'reset') {
-      if ((await read($, view)).isRunning) return text('Not reset: a test is running.')
+      if (isTesting(await read($, view))) return text('Not reset: a test is running.')
       const who = await read($, person)
       await update($, scores, () => ({}))
       await $.store.set(pkey('scores'), {})
@@ -803,7 +859,7 @@ export const register: Register = (on, options) => {
       return text(`Corrected ${key} to ${input.points}/10 for ${await read($, person)}. Move Score ${total.points}/${total.max} (${total.done} of ${SCORED.length} tests).`)
     }
     if (input.action === 'stop') {
-      if (await cancelBaseline($, 'stopped') && !(await read($, view)).isRunning) return text('Baseline cancelled; nothing was recorded.')
+      if (await cancelBaseline($, 'stopped') && !isTesting(await read($, view))) return text('Baseline cancelled; nothing was recorded.')
       await stop($)
       return text('Stopping. The partial result will arrive as a message.')
     }
@@ -830,6 +886,7 @@ export const register: Register = (on, options) => {
     const els = $.ui.resolve(e) as any
     const { Box, Text, Button } = els
     const v = await read($, view)
+    const camList = await read($, cameras)
     const meta = TESTS[v.test]
     const isTerminal = e.surface === 'terminal'
 
@@ -963,7 +1020,7 @@ export const register: Register = (on, options) => {
           </Box>
         )}
         <Text dimColor>
-          {v.isRunning ? `● ${v.phase} · ${v.elapsed}s` : v.phase === 'done' ? (last.stopped ? '■ stopped. The camera is off; nothing was scored.' : '✓ done') : '○ idle'}
+          {v.isRunning ? `● ${v.phase} · ${v.elapsed}s` : v.test === 'free' ? '○ camera off' : v.phase === 'done' ? (last.stopped ? '■ stopped. The camera is off; nothing was scored.' : '✓ done') : '○ idle'}
           {v.status ? `  ·  ${v.status}` : ''}
         </Text>
         {v.error && <Text color="red">{v.error}</Text>}
@@ -976,8 +1033,18 @@ export const register: Register = (on, options) => {
           </Box>
         ) : null}
         <Box flexDirection="row" gap={2}>
+          {els.Select && camList.length > 0 && (
+            <els.Select
+              // keyed on the device list so a renumbered list remounts the picker instead of keeping stale labels
+              key={`camera:${camList.map(c => c.name).join('|')}`}
+              label="Camera"
+              options={camList.map(c => ({ value: String(c.index), label: c.name }))}
+              value={String(chosenCamera ?? 0)}
+              onSelect={async (value: string) => pickCamera($, Number(value))}
+            />
+          )}
           {v.isRunning && <Button key="stop" label="Stop" onPress={async () => stop($)} />}
-          {ev.isRunning && !v.isRunning && !baselineRun && <Button key="eeg-baseline" label="EEG baseline" onPress={async () => void (await startBaseline($))} />}
+          {ev.isRunning && !isTesting(v) && !baselineRun && <Button key="eeg-baseline" label="EEG baseline" onPress={async () => void (await startBaseline($))} />}
           {ev.isRunning ? (
             <Button key="eeg-stop" label="Stop EEG" onPress={async () => stopEeg($)} />
           ) : (

@@ -120,3 +120,33 @@ test('each person keeps their own Move Score', async ($, on) => {
   expect(await coach($, { action: 'person', name: 'Sam' })).toContain('no tests yet')
   expect(await coach($, { action: 'person' })).toContain('Alex, Sam')
 })
+
+test('the command switches profiles, hands quick mode to Claude, and explains unknown words', async ($, on) => {
+  const mem = new Map<string, unknown>()
+  on('store.get', async (_$, e) => ({ value: mem.get(e.key) }))
+  on('store.set', async (_$, e) => (mem.set(e.key, e.value), { value: undefined }))
+  const prompts: string[] = []
+  on('clock.after', async () => ({ value: undefined }))
+  // quick mode opens the pane, which starts the silent camera preview
+  const spawned: string[][] = []
+  on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } } as never))
+  on('process.spawn', async function* (_$, e) {
+    spawned.push([...(e as { argv: string[] }).argv])
+    return { exitCode: 0 } as never
+  })
+  on('ui.open', async () => ({ value: undefined } as never))
+  on('fs.write', async () => ({ value: undefined } as never))
+  on('prompt.submit', async (_$, e) => (prompts.push(String((e as { text?: string }).text)), { value: undefined } as never))
+  const run = (args: string) => ($.command.run as unknown as (i: Record<string, unknown>) => Promise<{ text?: string }>)({ command: 'move-coach', args })
+  expect((await run('name Jane')).text).toContain('New profile: Jane')
+  expect((await run('quick John')).text).toContain('quick assessment for John')
+  for (let i = 0; i < 20 && !prompts.length; i++) await Promise.resolve()
+  expect(prompts.join(' ')).toContain('quick')
+  expect(prompts.join(' ')).toContain('John')
+  const preview = spawned.find(a => a.includes('--test'))
+  expect(preview?.[preview.indexOf('--test') + 1]).toBe('free')
+  expect(preview).toContain('--mute')
+  expect((await run('banana')).text).toContain("I don't know")
+  // let the preview's background work (camera list, stream end) settle before the test ends
+  await new Promise(r => setTimeout(r, 50))
+})

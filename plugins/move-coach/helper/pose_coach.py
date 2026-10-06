@@ -477,17 +477,23 @@ class SitAndRise(Test):
         self.ready_since = None
         self.seated_since = None
         self.up_since = None
+        self.settled = Steady(1.5, 0.1)
         self.events: list[str] = []
 
     def update(self, pose, t):
-        if pose is None or not self.full_body(pose):
-            if self.phase == "setup":
+        if self.phase == "setup":
+            if pose is None or not self.full_body(pose):
                 self.hint("I need to see your whole body and the floor. " + self.framing, t, 8)
+                return
+        # once the floor is known, a cross-legged sit hides the ankles: hips and shoulders are enough
+        # crossed legs and arms in front of the lap drop hip visibility well below 0.4
+        elif pose is None or not pose.vis(L_HIP, R_HIP, L_SH, R_SH, thr=0.2):
+            self.hint("I've lost sight of your hips. Keep your whole body in the camera.", t, 8)
             return
         T = pose.torso()
         hip = pose.mid(L_HIP, R_HIP)
-        feet_y = max(pose.pt(i)[1] for i in (L_AN, R_AN, L_HEEL, R_HEEL, L_FT, R_FT) if pose.v[i] > 0.3)
         if self.phase == "setup":
+            feet_y = max(pose.pt(i)[1] for i in (L_AN, R_AN, L_HEEL, R_HEEL, L_FT, R_FT) if pose.v[i] > 0.3)
             self.floor = feet_y if self.floor is None else 0.8 * self.floor + 0.2 * feet_y
             self.stand_h = (self.floor - hip[1]) / T
             self.ready_since = self.ready_since or t
@@ -499,16 +505,23 @@ class SitAndRise(Test):
         hip_h = (self.floor - hip[1]) / T  # hip height above floor in torso units
         wrist_floor = any(pose.v[w] > 0.4 and pose.pt(w)[1] > self.floor - 0.15 * T for w in (L_WR, R_WR))
         knee_floor = any(pose.v[k] > 0.4 and pose.pt(k)[1] > self.floor - 0.12 * T for k in (L_KN, R_KN))
-        seated = hip_h < 0.45 * self.stand_h
-        self.metrics = {"hip_height": round(hip_h, 2), "hand_touches": self.hand.count, "knee_touches": self.knee.count}
+        # a deep squat on the way down already drops the hips below half standing height,
+        # so "seated" means hips near the floor; the down phase also waits for them to settle
+        # a slow crouch on the way down can also sit that low and still; what tells the two
+        # apart is the knees: a shin length up in a crouch, near the floor when cross-legged
+        knee_hs = [(self.floor - pose.pt(k)[1]) / T for k in (L_KN, R_KN) if pose.v[k] > 0.4]
+        knees_low = all(h < 0.5 for h in knee_hs)
+        seated = hip_h < 0.3 * self.stand_h and knees_low
+        self.metrics = {"hip_height": round(hip_h, 2), "knee_height": round(max(knee_hs), 2) if knee_hs else None, "hand_touches": self.hand.count, "knee_touches": self.knee.count}
 
         if self.phase == "down":
             if not seated and self.hand.update(wrist_floor, t):
                 self.events.append("hand on floor while lowering")
                 self.say("Hand down. Try it without hands next time.", priority=False)
+            settled = self.settled.update(hip, T, t)
             if seated:
                 self.seated_since = self.seated_since or t
-                if t - self.seated_since > 1.5:
+                if t - self.seated_since > 1.5 and settled:
                     self.go("up", t, "Now stand up without using your hands or knees. Lean forward and reach your arms out for balance.",
                             "Nice. Now stand back up, no hands, no knees. Lean forward and reach your arms out.")
             else:

@@ -70,6 +70,6 @@ export type Scores = Partial<Record<TestKey, ScoreEntry>>
 
 declare module 'claude-code' {
   interface PluginState {
-    'move-coach': { view: CoachView; scores: Scores; eeg: EegView; person: string }
+    'move-coach': { view: CoachView; scores: Scores; eeg: EegView; person: string; cameras: { index: number; name: string }[] }
   }
 }
